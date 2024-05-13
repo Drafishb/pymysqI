@@ -1,216 +1,201 @@
 def display_code():
     code = """
 import tkinter as tk
-from tkinter import ttk
-from tkinter import messagebox
+from tkinter import ttk, messagebox
 import pymysql
 
-def fetch_data(table_name, connection):
-    try:
-        with connection.cursor() as cursor:
-            cursor.execute(f"SELECT * FROM {table_name}")
-            return cursor.fetchall()
-    except pymysql.Error as e:
-        print(f"Ошибка при выполнении запроса к базе данных: {e}")
-        return []
 
-def insert_data(table_name, values, connection):
-    try:
-        with connection.cursor() as cursor:
-            placeholders = ', '.join(['%s'] * len(values))
-            cursor.execute(f"INSERT INTO {table_name} VALUES ({placeholders})", values)
-            connection.commit()
-            print("Данные успешно добавлены в таблицу.")
-            return True
-    except pymysql.Error as e:
-        print(f"Ошибка при вставке данных в таблицу: {e}")
-        return False
+class DatabaseApp:
+    def __init__(self, root):
+        self.root = root
+        self.root.title("Database App")
 
-def delete_data(table_name, primary_key_value, connection):
-    try:
-        with connection.cursor() as cursor:
-            cursor.execute(f"DELETE FROM {table_name} WHERE {table_name}_INT=%s", (primary_key_value,))
-            connection.commit()
-            print("Запись успешно удалена.")
-            return True
-    except pymysql.Error as e:
-        print(f"Ошибка при удалении записи из таблицы: {e}")
-        return False
+        # Создание и размещение виджетов для авторизации
+        self.login_frame = ttk.Frame(self.root)
+        self.login_frame.pack(padx=20, pady=20)
+        self.username_label = ttk.Label(self.login_frame, text="Логин:")
+        self.username_label.grid(row=0, column=0, padx=5, pady=5, sticky="e")
+        self.username_entry = ttk.Entry(self.login_frame)
+        self.username_entry.grid(row=0, column=1, padx=5, pady=5)
+        self.password_label = ttk.Label(self.login_frame, text="Пароль:")
+        self.password_label.grid(row=1, column=0, padx=5, pady=5, sticky="e")
+        self.password_entry = ttk.Entry(self.login_frame, show="*")
+        self.password_entry.grid(row=1, column=1, padx=5, pady=5)
+        self.login_button = ttk.Button(self.login_frame, text="Войти", command=self.login)
+        self.login_button.grid(row=2, column=0, columnspan=2, padx=5, pady=5)
 
-def update_data(table_name, columns, primary_key_value, new_values, connection):
-    try:
-        with connection.cursor() as cursor:
-            placeholders = ', '.join([f"{col}=%s" for col in columns])
-            cursor.execute(f"UPDATE {table_name} SET {placeholders} WHERE {table_name}_INT=%s", (*new_values, primary_key_value))
-            connection.commit()
-            print("Запись успешно обновлена.")
-            return True
-    except pymysql.Error as e:
-        print(f"Ошибка при обновлении записи в таблице: {e}")
-        return False
+        # Инициализация соединения с базой данных
+        self.db = None
 
-def update_table(treeview, table_name, connection):
-    treeview.delete(*treeview.get_children())
-    new_data = fetch_data(table_name, connection)
-    for row in new_data:
-        treeview.insert("", "end", values=row)
+    def login(self):
+        # Подключение к базе данных
+        try:
+            self.db = pymysql.connect(host='localhost',
+                                      user='root',
+                                      password='pfrpCnd47Dz75VX7',
+                                      database='TestBD',
+                                      charset='utf8mb4',
+                                      cursorclass=pymysql.cursors.DictCursor)
 
-def add_record_dialog(table_name, connection, treeview):
-    dialog = tk.Toplevel()
-    dialog.title("Добавление записи")
+            # Проверка логина и пароля
+            with self.db.cursor() as cursor:
+                cursor.execute("SELECT * FROM users WHERE Login=%s AND Password=%s",
+                               (self.username_entry.get(), self.password_entry.get()))
+                user = cursor.fetchone()
+                if user:
+                    # Успешная авторизация, показываем таблицу
+                    self.show_table()
+                else:
+                    messagebox.showerror("Ошибка", "Неверный логин или пароль")
+        except pymysql.Error as e:
+            messagebox.showerror("Ошибка", "Неверный логин или пароль: {}".format(str(e)))
 
-    entry_frame = ttk.Frame(dialog, padding="10")
-    entry_frame.pack()
+    def show_table(self):
+        # Удаление виджетов авторизации
+        self.login_frame.destroy()
 
-    with connection.cursor() as cursor:
-        cursor.execute(f"SHOW COLUMNS FROM {table_name}")
-        columns = [col[0] for col in cursor.fetchall()]
+        # Создание и размещение виджетов для работы с таблицей
+        self.table_frame = ttk.Frame(self.root)
+        self.table_frame.pack(padx=20, pady=20)
 
-    entry_fields = []
-    for i, col in enumerate(columns):
-        ttk.Label(entry_frame, text=col).grid(row=i, column=0, sticky="e")
-        entry_field = ttk.Entry(entry_frame)
-        entry_field.grid(row=i, column=1, padx=5, pady=5)
-        entry_fields.append(entry_field)
+        # Создание таблицы для вывода данных
+        self.data_tree = ttk.Treeview(self.table_frame, columns=("ID", "Name", "Age"))
+        self.data_tree.heading("#0", text="ID")
+        self.data_tree.heading("#1", text="Name")
+        self.data_tree.heading("#2", text="Age")
+        self.data_tree.pack(expand=True, fill="both")
 
-    def insert_record():
-        values = [entry.get() for entry in entry_fields]
-        if insert_data(table_name, values, connection):
-            messagebox.showinfo("Успех", "Запись успешно добавлена.")
-            dialog.destroy()
-            update_table(treeview, table_name, connection)
+        # Заполнение таблицы данными из базы данных
+        self.refresh_table()
 
-    ttk.Button(entry_frame, text="Добавить", command=insert_record).grid(row=len(columns), columnspan=2, pady=10)
+        # Кнопки для добавления, редактирования и удаления записей
+        self.add_button = ttk.Button(self.table_frame, text="Добавить", command=self.add_record)
+        self.add_button.pack(side="left", padx=5, pady=5)
+        self.edit_button = ttk.Button(self.table_frame, text="Редактировать", command=self.edit_record)
+        self.edit_button.pack(side="left", padx=5, pady=5)
+        self.delete_button = ttk.Button(self.table_frame, text="Удалить", command=self.delete_record)
+        self.delete_button.pack(side="left", padx=5, pady=5)
 
-def delete_record(treeview, table_name, connection):
-    selected_item = treeview.selection()[0]
-    values = treeview.item(selected_item)['values']
-    primary_key_value = values[0]  # Предполагаем, что первый столбец - это ваш primary key
-    if delete_data(table_name, primary_key_value, connection):
-        messagebox.showinfo("Успех", "Запись успешно удалена.")
-        update_table(treeview, table_name, connection)
+    def refresh_table(self):
+        # Очистка таблицы
+        for row in self.data_tree.get_children():
+            self.data_tree.delete(row)
 
-def edit_record_dialog(table_name, connection, treeview):
-    selected_item = treeview.selection()[0]
-    values = treeview.item(selected_item)['values']
-    primary_key_value = values[0]  # Предполагаем, что первый столбец - это ваш primary key
+        # Запрос данных из базы данных
+        with self.db.cursor() as cursor:
+            cursor.execute("SELECT * FROM your_table")
+            for row in cursor.fetchall():
+                self.data_tree.insert("", "end", text=row['id'], values=(row['id'], row['name'], row['age']))
 
-    dialog = tk.Toplevel()
-    dialog.title("Редактирование записи")
+    def add_record(self):
+        # Создание диалогового окна для ввода данных
+        self.add_window = tk.Toplevel(self.root)
+        self.add_window.title("Add Record")
+        self.add_window.grab_set()
 
-    entry_frame = ttk.Frame(dialog, padding="10")
-    entry_frame.pack()
+        self.name_label = ttk.Label(self.add_window, text="Name:")
+        self.name_label.grid(row=0, column=0, padx=5, pady=5, sticky="e")
+        self.name_entry = ttk.Entry(self.add_window)
+        self.name_entry.grid(row=0, column=1, padx=5, pady=5)
 
-    with connection.cursor() as cursor:
-        cursor.execute(f"SHOW COLUMNS FROM {table_name}")
-        columns = [col[0] for col in cursor.fetchall()]
+        self.age_label = ttk.Label(self.add_window, text="Age:")
+        self.age_label.grid(row=1, column=0, padx=5, pady=5, sticky="e")
+        self.age_entry = ttk.Entry(self.add_window)
+        self.age_entry.grid(row=1, column=1, padx=5, pady=5)
 
-    entry_fields = []
-    for i, col in enumerate(columns):
-        ttk.Label(entry_frame, text=col).grid(row=i, column=0, sticky="e")
-        entry_field = ttk.Entry(entry_frame)
-        entry_field.grid(row=i, column=1, padx=5, pady=5)
-        entry_field.insert(0, str(values[i]))  # Заполняем текущим значением
-        entry_fields.append(entry_field)
+        self.save_button = ttk.Button(self.add_window, text="Сохранить", command=self.save_record)
+        self.save_button.grid(row=2, column=0, columnspan=2, padx=5, pady=5)
 
-    def update_record():
-        new_values = [entry.get() for entry in entry_fields]
-        if update_data(table_name, columns, primary_key_value, new_values, connection):
-            messagebox.showinfo("Успех", "Запись успешно обновлена.")
-            dialog.destroy()
-            update_table(treeview, table_name, connection)
+    def save_record(self):
+        # Получение данных из полей ввода
+        name = self.name_entry.get()
+        age = self.age_entry.get()
 
-    ttk.Button(entry_frame, text="Сохранить", command=update_record).grid(row=len(columns), columnspan=2, pady=10)
+        # Вставка записи в базу данных
+        with self.db.cursor() as cursor:
+            cursor.execute("INSERT INTO your_table (Name, Age) VALUES (%s, %s)", (name, age))
+            self.db.commit()
 
-def main():
-    host = 'localhost'
-    user = 'root'
-    database = 'TestBD'
+        # Закрытие диалогового окна
+        self.add_window.destroy()
 
-    connection = pymysql.connect(host=host, user=user, database=database)
+        # Обновление таблицы
+        self.refresh_table()
 
-    root = tk.Tk()
-    root.title("Данные из базы данных")
+    def edit_record(self):
+        # Получение выделенной записи из таблицы
+        selected_item = self.data_tree.selection()
+        if not selected_item:
+            messagebox.showerror("Ошибка", "Не выбрана запись")
+            return
 
-    # Устанавливаем размер окна
-    window_width = 800
-    window_height = 600
-    screen_width = root.winfo_screenwidth()
-    screen_height = root.winfo_screenheight()
-    x = (screen_width - window_width) // 2
-    y = (screen_height - window_height) // 2
-    root.geometry(f"{window_width}x{window_height}+{x}+{y}")
+        # Получение данных выбранной записи
+        item_values = self.data_tree.item(selected_item, "values")
+        record_id = item_values[0]
+        name = item_values[1]
+        age = item_values[2]
 
-    root.resizable(False, False)
+        # Создание диалогового окна для редактирования данных
+        self.edit_window = tk.Toplevel(self.root)
+        self.edit_window.title("Edit Record")
+        self.edit_window.grab_set()
 
-    canvas = tk.Canvas(root)
-    canvas.pack(side="left", fill="both", expand=True)
+        self.name_label = ttk.Label(self.edit_window, text="Name:")
+        self.name_label.grid(row=0, column=0, padx=5, pady=5, sticky="e")
+        self.name_entry = ttk.Entry(self.edit_window)
+        self.name_entry.grid(row=0, column=1, padx=5, pady=5)
+        self.name_entry.insert(0, name)
 
-    scrollbar = ttk.Scrollbar(root, orient="vertical", command=canvas.yview)
-    scrollbar.pack(side="right", fill="y")
+        self.age_label = ttk.Label(self.edit_window, text="Age:")
+        self.age_label.grid(row=1, column=0, padx=5, pady=5, sticky="e")
+        self.age_entry = ttk.Entry(self.edit_window)
+        self.age_entry.grid(row=1, column=1, padx=5, pady=5)
+        self.age_entry.insert(0, age)
 
-    canvas.configure(yscrollcommand=scrollbar.set)
-    canvas.bind("<Configure>", lambda e: canvas.configure(scrollregion=canvas.bbox("all")))
+        self.save_button = ttk.Button(self.edit_window, text="Сохранить", command=lambda: self.save_edited_record(record_id))
+        self.save_button.grid(row=2, column=0, columnspan=2, padx=5, pady=5)
 
-    table_frame = ttk.Frame(canvas)
-    canvas.create_window((0, 0), window=table_frame, anchor="nw")
+    def save_edited_record(self, record_id):
+        # Получение данных из полей ввода
+        name = self.name_entry.get()
+        age = self.age_entry.get()
 
-    data_test1 = fetch_data("Table1", connection)
-    data_test2 = fetch_data("Table2", connection)
-    data_test3 = fetch_data("Table3", connection)
+        # Обновление записи в базе данных
+        with self.db.cursor() as cursor:
+            cursor.execute("UPDATE your_table SET Name=%s, Age=%s WHERE id=%s", (name, age, record_id))
+            self.db.commit()
 
-    def display_data(frame, data, table_name):
-        table_subframe = ttk.Frame(frame)
-        table_subframe.pack(pady=5)
+        # Закрытие диалогового окна
+        self.edit_window.destroy()
 
-        ttk.Label(table_subframe, text=f"Таблица {table_name}").pack()
+        # Обновление таблицы
+        self.refresh_table()
 
-        tree = ttk.Treeview(table_subframe, columns=data[0], show="headings")
-        for col in data[0]:
-            tree.heading(col, text=col)
-        for row in data:
-            tree.insert("", "end", values=row)
-        tree.pack(side="left", fill="both")
+    def delete_record(self):
+        # Получение выделенной записи из таблицы
+        selected_item = self.data_tree.selection()
+        if not selected_item:
+            messagebox.showerror("Ошибка", "Не выбрана запись")
+            return
 
-        scrollbar = ttk.Scrollbar(table_subframe, orient="vertical", command=tree.yview)
-        scrollbar.pack(side="right", fill="y")
-        tree.config(yscrollcommand=scrollbar.set)
+        # Получение ID выбранной записи
+        record_id = self.data_tree.item(selected_item, "text")
 
-        buttons_frame = ttk.Frame(frame)
-        buttons_frame.pack()
+        # Подтверждение удаления записи
+        confirm = messagebox.askyesno("Подтвердить", "Вы уверены, что хотите удалить эту запись?")
+        if confirm:
+            # Удаление записи из базы данных
+            with self.db.cursor() as cursor:
+                cursor.execute("DELETE FROM your_table WHERE id=%s", (record_id,))
+                self.db.commit()
 
-        def open_dialog():
-            add_record_dialog(table_name, connection, tree)
+            # Обновление таблицы
+            self.refresh_table()
 
-        ttk.Button(buttons_frame, text="Добавить запись", command=open_dialog).pack(side="left", padx=5)
 
-        def edit_record():
-            if not tree.selection():
-                return
-            edit_record_dialog(table_name, connection, tree)
-
-        ttk.Button(buttons_frame, text="Редактировать запись", command=edit_record).pack(side="left", padx=5)
-
-        def delete_record_wrapper():
-            if not tree.selection():
-                return
-            delete_record(tree, table_name, connection)
-
-        ttk.Button(buttons_frame, text="Удалить запись", command=delete_record_wrapper).pack(side="left", padx=5)
-
-    if data_test1:
-        display_data(table_frame, data_test1, "Table1")
-
-    if data_test2:
-        display_data(table_frame, data_test2, "Table2")
-
-    if data_test3:
-        display_data(table_frame, data_test3, "Table3")
-
-    root.mainloop()
-
-if __name__ == "__main__":
-    main()
+root = tk.Tk()
+app = DatabaseApp(root)
+root.mainloop()
 
 """
     print(code)
